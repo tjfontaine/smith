@@ -14,8 +14,8 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/kr/pty"
+	"github.com/sirupsen/logrus"
 )
 
 // CloseExtraFds closes any open file descriptors other than

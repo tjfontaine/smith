@@ -2,14 +2,6 @@
 
 
 [[projects]]
-  digest = "1:8eca1a18640cf3c015df3721cf4eaf9b470df7d50d2cc52e17065fddb3a4e8e7"
-  name = "github.com/Sirupsen/logrus"
-  packages = ["."]
-  pruneopts = "UT"
-  revision = "4b6ea7319e214d98c938f12692336f7ca9348d6b"
-  version = "v0.10.0"
-
-[[projects]]
   digest = "1:2cd7915ab26ede7d95b8749e6b1f933f1c6d5398030684e6505940a10f31cfda"
   name = "github.com/ghodss/yaml"
   packages = ["."]
@@ -53,6 +45,14 @@
   version = "v1.0.0"
 
 [[projects]]
+  digest = "1:8eca1a18640cf3c015df3721cf4eaf9b470df7d50d2cc52e17065fddb3a4e8e7"
+  name = "github.com/sirupsen/logrus"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "4b6ea7319e214d98c938f12692336f7ca9348d6b"
+  version = "v0.10.0"
+
+[[projects]]
   digest = "1:7a8378ec92b2735b61f2ebd5a8c6cebefd5bb56f9f9307f7ddc080684f47356e"
   name = "github.com/spf13/cobra"
   packages = ["."]
@@ -84,11 +84,11 @@
   analyzer-name = "dep"
   analyzer-version = 1
   input-imports = [
-    "github.com/Sirupsen/logrus",
     "github.com/ghodss/yaml",
     "github.com/kr/pty",
     "github.com/opencontainers/go-digest",
     "github.com/opencontainers/image-spec/specs-go/v1",
+    "github.com/sirupsen/logrus",
     "github.com/spf13/cobra",
   ]
   solver-name = "gps-cdcl"

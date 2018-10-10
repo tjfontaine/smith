@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Sirupsen/logrus"
 	gdigest "github.com/opencontainers/go-digest"
+	"github.com/sirupsen/logrus"
 )
 
 // RegistryClient is a type for container image registry clients.

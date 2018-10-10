@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 )
 
 // NT_GNU_BUILD_ID is defined in <elf.h>
