@@ -3,8 +3,8 @@ package main
 import (
 	"io/ioutil"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/ghodss/yaml"
+	"github.com/sirupsen/logrus"
 )
 
 type MockDef struct {
