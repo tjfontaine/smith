@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 )
 
 func CopyTree(baseDir, outputDir string, globs []string, excludes []string, nss, follow, chroot bool) error {
