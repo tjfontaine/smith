@@ -43,7 +43,11 @@ Both methods are described below, but __the Docker route is recommended__ as the
 
 2.  Build `smith` Docker image using the Dockerfile provided, optionally adding your own docker-repo-id to the tag:
 
-`sudo docker build -t [<docker-repo-id>/]smith .`
+`make build-docker`
+
+or
+
+`sudo docker build -t ${USER}/smith .`
 
 3.  Set up an alias (or script) to run `smith` from the command line:
 ```
@@ -52,7 +56,7 @@ smith(){
     --privileged -v $PWD:/write \
     -v cache:/var/cache \
     -v /tmp:/tmp \
-    -v mock:/var/lib/mock [<docker-repo-id>/]smith $@
+    -v mock:/var/lib/mock ${USER}/smith $@
 }
 ```
 You should now be able to start building microcontainers (see below).
@@ -209,7 +213,7 @@ To build Smith directly from oci, the Docker command is slightly different:
 smith(){
     docker run -it --rm \
     -v $PWD:/write \
-    -v tmp:/tmp vishvananda/smith $@
+    -v tmp:/tmp ${USER}/smith $@
 }
 ```
 

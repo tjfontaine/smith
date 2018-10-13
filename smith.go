@@ -44,6 +44,8 @@ func main() {
 		cobra.BashCompFilenameExt: []string{"tar.gz"},
 	}
 
+	useDockerFormat := false
+
 	buildCmd := cobra.Command{
 		Use:   "smith",
 		Short: "smith - build hardened containers",
@@ -64,6 +66,13 @@ func main() {
 				cmd.Usage()
 				return
 			}
+
+			if useDockerFormat {
+				buildOpts.format = "docker"
+			} else {
+				buildOpts.format = "oci"
+			}
+
 			if !buildContainer(image, &buildOpts) {
 				cmdExitCode = 1
 			}
@@ -75,11 +84,13 @@ func main() {
 	f.StringVarP(&buildOpts.dir, "dir", "d", ".", "directory to build container image from")
 	f.StringVarP(&image, "image", "i", "image.tar.gz", "container image file")
 	f.StringVarP(&buildOpts.buildNo, "buildnumber", "b", defaultBuild, "unique build number")
+	f.StringVarP(&buildOpts.tag, "tag", "t", "", "annotate archive with tag")
 	f.Lookup("image").Annotations = annotations
 	f = buildCmd.PersistentFlags()
 	f.BoolVarP(&opts.verbose, "verbose", "v", false, "verbose output")
 	f.BoolVarP(&opts.version, "version", "V", false, "show version")
 	f.BoolVarP(&buildOpts.insecure, "insecure", "k", false, "skip tls verification")
+	f.BoolVarP(&useDockerFormat, "docker", "D", false, "output docker archive format")
 
 	var remote string
 	var docker bool

@@ -77,3 +77,39 @@ rpms: rpm/smith-$(VERSION)-3.x86_64.rpm
 version:
 	@echo $(VERSION)
 
+build-docker-clean:
+	rm -rf from-docker-image.tar.gz from-smith-image.tar.gz checksum.txt
+
+ORG := ${USER}
+REPO := ${ORG}/${NAME}
+TAG := ${REPO}:${VERSION}
+
+build-docker-build:
+	docker build -t ${TAG} .
+
+build-docker-archive: build-docker-clean build-docker-build
+	docker save ${TAG} | gzip -c > from-docker-image.tar.gz
+	docker run \
+			-it --rm \
+			-v ${PWD}:/write \
+			-v tmp:/tmp \
+			${TAG} \
+			--docker \
+			-i from-smith-image.tar.gz \
+			--tag ${TAG}
+	docker load -i from-smith-image.tar.gz
+	sha1sum from-smith-image.tar.gz > checksum.txt
+	rm from-smith-image.tar.gz
+	docker run \
+			-it --rm \
+			-v ${PWD}:/write \
+			-v tmp:/tmp \
+			${TAG} \
+			--docker \
+			-i from-smith-image.tar.gz \
+			--tag ${TAG}
+	sha1sum -c checksum.txt
+	rm -rf from-docker-image.tar.gz from-smith-image.tar.gz checksum.txt
+	docker tag ${TAG} ${REPO}:latest
+
+build-docker: build-docker-archive build-docker-clean
