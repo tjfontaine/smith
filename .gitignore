@@ -3,3 +3,4 @@ smith
 rpm
 .idea/
 .wercker
+*.tar.gz

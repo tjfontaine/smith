@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sirupsen/logrus"
 	gdigest "github.com/opencontainers/go-digest"
 	"github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -376,6 +376,33 @@ type OpaqueBlob struct {
 	Content  []byte
 }
 
+type ContainerArchiveType interface {
+	Name() string
+	Probe(string) (bool, []byte)
+	GetImage([]byte, string, string, string) (*Image, error)
+}
+
+type OciArchiveType struct {
+}
+
+func (at OciArchiveType) Name() string {
+	return "oci"
+}
+
+func (at OciArchiveType) Probe(tarpath string) (bool, []byte) {
+	refb, err := extractFile(tarpath, "index.json")
+	if err != nil {
+		logrus.Debugf("failed to find OCI archive: %v", err)
+		return false, nil
+	}
+	return true, refb
+}
+
+var SupportedArchiveFormats = []ContainerArchiveType{
+	0: OciArchiveType{},
+	1: DockerArchiveType{},
+}
+
 func imageFromFile(path string) (*Image, error) {
 	tag := "latest"
 	parts := strings.Split(path, ":")
@@ -383,10 +410,19 @@ func imageFromFile(path string) (*Image, error) {
 	if len(parts) > 1 {
 		tag = parts[1]
 	}
-	refb, err := extractFile(tarpath, "index.json")
-	if err != nil {
-		return nil, err
+
+	for _, probe := range SupportedArchiveFormats {
+		logrus.Debugf("probing for archive format: %s", probe.Name())
+		if isArchive, refb := probe.Probe(tarpath); isArchive {
+			logrus.Debugf("found archive format: %s", probe.Name())
+			return probe.GetImage(refb, tag, tarpath, path)
+		}
 	}
+
+	return nil, fmt.Errorf("unable to determine container archive format")
+}
+
+func (OciArchiveType) GetImage(refb []byte, tag string, tarpath string, path string) (*Image, error) {
 	var ref v1.Index
 	if err := json.Unmarshal(refb, &ref); err != nil {
 		return nil, fmt.Errorf("error unmarshaling index.json from %s", tarpath)
@@ -457,7 +493,7 @@ func imageFromBuild(def *ConfigDef, baseDir string) (*Image, error) {
 	return image, nil
 }
 
-func WriteOciFromBuild(def *ConfigDef, buildDir, outName string, metadata *ImageMetadata, blobs []OpaqueBlob) error {
+func WriteOciFromBuild(buildOpts *buildOptions, def *ConfigDef, buildDir, outName string, metadata *ImageMetadata, blobs []OpaqueBlob) error {
 	image, err := imageFromBuild(def, buildDir)
 	if err != nil {
 		return err
@@ -503,7 +539,7 @@ func WriteOciTar(image *Image, out io.Writer) error {
 	for _, l := range image.Layers {
 		digest := l.Desc.Digest
 		parts := append([]string{"blobs"}, string(digest.Algorithm()), digest.Hex())
-		logrus.Infof("Adding layer %s to image", l.Desc.Digest)
+		logrus.Debugf("Adding layer %s to image", l.Desc.Digest)
 		fileData[filepath.Join(parts...)] = l.Data
 	}
 
@@ -672,7 +708,7 @@ func extractLayer(layer *Layer, outDir string) error {
 	return nil
 }
 
-func ExtractOci(image *Image, outDir string) error {
+func extractLayers(image *Image, outDir string) error {
 	// extract layers
 	for _, layer := range image.Layers {
 		if err := extractLayer(layer, outDir); err != nil {

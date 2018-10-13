@@ -27,9 +27,11 @@ type buildOptions struct {
 	conf     string
 	dir      string
 	buildNo  string
+	format   string
+	tag      string
 }
 
-func isOci(uri string) bool {
+func isContainer(uri string) bool {
 	// urls are oci images
 	if strings.HasPrefix(uri, "http://") ||
 		strings.HasPrefix(uri, "https://") {
@@ -54,12 +56,13 @@ func isOci(uri string) bool {
 func installPackage(buildOpts *buildOptions, outputDir string, pkg *ConfigDef) ([]string, error) {
 	logrus.Infof("Installing package %v", pkg.Package)
 	if pkg.Type == "" {
-		if isOci(pkg.Package) {
-			pkg.Type = "oci"
+		if isContainer(pkg.Package) {
+			pkg.Type = "container"
 		} else {
 			pkg.Type = "mock"
 		}
 	}
+
 	switch pkg.Type {
 	case "mock":
 		if pkg.Mock.Config == "" {
@@ -76,13 +79,19 @@ func installPackage(buildOpts *buildOptions, outputDir string, pkg *ConfigDef) (
 		sort.Strings(packages)
 		return packages, nil
 	case "oci":
-		if err := buildOci(buildOpts, outputDir, pkg); err != nil {
+		logrus.Warnf("smith build type %s is deprecated, please use %s", pkg.Type, "container")
+		pkg.Type = "container"
+		/* FALLTHROUGH */
+	case "container":
+		if err := buildContainerArchive(buildOpts, outputDir, pkg); err != nil {
 			return nil, err
 		}
 		return nil, nil
 	default:
 		return nil, fmt.Errorf("Package type %v not recognized", pkg.Type)
 	}
+
+	return nil, fmt.Errorf("Package type not recognized (impossible)")
 }
 
 func getMetadata() *ImageMetadata {
@@ -224,11 +233,24 @@ func buildContainer(tarfile string, buildOpts *buildOptions) bool {
 	}
 
 	// pack
-	logrus.Infof("Packing image into %v", outpath)
-	if err := WriteOciFromBuild(pkg, buildDir, outpath, metadata, extraBlobs); err != nil {
-		logrus.Errorf("Failed to pack dir into %v: %v", outpath, err)
+	logrus.Infof("Packing image into %v -- ", outpath)
+
+	switch buildOpts.format {
+	case "oci":
+		if err := WriteOciFromBuild(buildOpts, pkg, buildDir, outpath, metadata, extraBlobs); err != nil {
+			logrus.Errorf("Failed to pack dir into %v: %v", outpath, err)
+			return false
+		}
+	case "docker":
+		if err := WriteDockerFromBuild(buildOpts, pkg, buildDir, outpath, metadata, extraBlobs); err != nil {
+			logrus.Fatalf("Failed to pack dir into %v: %v", outpath, err)
+			return false
+		}
+	default:
+		logrus.Fatalf("unknown build output format: %v", buildOpts.format)
 		return false
 	}
+
 	return true
 }
 
@@ -329,7 +351,7 @@ func buildMock(buildOpts *buildOptions, outputDir string, pkg *ConfigDef, pkgMfs
 	return nil
 }
 
-func buildOci(buildOpts *buildOptions, outputDir string, pkg *ConfigDef) error {
+func buildContainerArchive(buildOpts *buildOptions, outputDir string, pkg *ConfigDef) error {
 	uid, gid := os.Getuid(), os.Getgid()
 	unpackDir := filepath.Join(os.TempDir(), "smith-unpack-"+strconv.Itoa(uid))
 
@@ -410,7 +432,7 @@ func buildOci(buildOpts *buildOptions, outputDir string, pkg *ConfigDef) error {
 		if err := os.MkdirAll(unpackDir, 0755); err != nil {
 			return err
 		}
-		if err := ExtractOci(image, unpackDir); err != nil {
+		if err := extractLayers(image, unpackDir); err != nil {
 			return err
 		}
 		if err := readablePathsFromExecutor(executor, pkg.Paths); err != nil {
