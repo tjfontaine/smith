@@ -141,6 +141,8 @@ To use smith, simply create a smith.yaml defining your container and run
 `smith`. If you want to overlay additional files or symlinks, simply place them
 into a directory called `rootfs` beside smith.yaml.
 
+Please consult the documentation for a list of all relevant fields for [smith.yaml](docs/smith-config-file.md)
+
 If you are building the same container multiple times without editing the
 package line, the `-f` parameter will rebuild the container without
 reinstalling the package.
