@@ -60,7 +60,7 @@ func tarWriteFunc(baseDir string, tarOut *tar.Writer, uid int, gid int) filepath
 			header.Typeflag = tar.TypeDir
 			header.Mode |= c_ISDIR
 			header.Name += string(filepath.Separator)
-			logrus.Debugf("Adding directory %v to archive", path)
+			logrus.Debugf("(tarWriteFunc) Adding directory %v to archive", path)
 			err = tarOut.WriteHeader(header)
 			if err != nil {
 				return err
@@ -110,26 +110,27 @@ func writeDirTar(tarOut *tar.Writer, path string) error {
 	header.Typeflag = tar.TypeDir
 	header.Mode = 0755 | c_ISDIR
 	header.Name = path
-	logrus.Debugf("Adding directory %v to archive", path)
+	logrus.Debugf("(writeDirTar) Adding directory %v to archive", path)
 	if err := tarOut.WriteHeader(header); err != nil {
 		return err
 	}
 	return nil
 }
 
-func writeFileTar(tarOut *tar.Writer, path string, b []byte) error {
+func writeFileTar(tarOut *tar.Writer, path string, size int64, r io.Reader) error {
 	// basic header
 	header := new(tar.Header)
 	header.ModTime = time.Time{}
 	header.Typeflag = tar.TypeReg
 	header.Mode = 0644 | c_ISREG
-	header.Size = int64(len(b))
+	header.Size = size
 	header.Name = path
 	logrus.Debugf("Adding file %v to archive", path)
 	if err := tarOut.WriteHeader(header); err != nil {
 		return err
 	}
-	if _, err := io.Copy(tarOut, bytes.NewReader(b)); err != nil {
+
+	if _, err := io.Copy(tarOut, r); err != nil {
 		return err
 	}
 	return nil
@@ -211,11 +212,11 @@ func digest(b []byte) gdigest.Digest {
 	return gdigest.FromBytes(b)
 }
 
-func desc(mt string, b []byte, digest gdigest.Digest) v1.Descriptor {
+func desc(mt string, size int64, digest gdigest.Digest) v1.Descriptor {
 	return v1.Descriptor{
 		MediaType: mt,
 		Digest:    digest,
-		Size:      int64(len(b)),
+		Size:      size,
 	}
 }
 
@@ -226,10 +227,17 @@ func imageIndex(entries []v1.Descriptor, annotations map[string]string) v1.Index
 }
 
 func layerFromPath(path string, uid int, gid int) (*Layer, error) {
-	b := bytes.Buffer{}
+	f, err := ioutil.TempFile("", "layer-path-")
+	defer f.Close()
+
+	if err != nil {
+		logrus.Errorf("Failed to open temporary file for layer: %v", err)
+		return nil, err
+	}
+
 	gzipHash := sha256.New()
 	tarHash := sha256.New()
-	gzipOut, err := MaybeGzipWriter(io.MultiWriter(&b, gzipHash))
+	gzipOut, err := MaybeGzipWriter(io.MultiWriter(f, gzipHash))
 	if err != nil {
 		return nil, err
 	}
@@ -245,14 +253,21 @@ func layerFromPath(path string, uid int, gid int) (*Layer, error) {
 	tarOut.Close()
 	gzipOut.Close()
 	diffSha := gdigest.NewDigest("sha256", tarHash)
-	logrus.Infof("DiffID of layer is %s", diffSha)
+	logrus.Infof("DiffID of layer is %s: %s", path, diffSha)
 	layerSha := gdigest.NewDigest("sha256", gzipHash)
-	layer := Layer{DiffID: diffSha, Data: b.Bytes()}
-	layer.Desc = desc(layerMT, layer.Data, layerSha)
+
+	stat, err := f.Stat()
+
+	if err != nil {
+		logrus.Warnf("Failed to stat temporary file, any recovery at this point? %v", err)
+	}
+
+	layer := Layer{DiffID: diffSha, Filepath: f.Name()}
+	layer.Desc = desc(layerMT, stat.Size(), layerSha)
 	return &layer, nil
 }
 
-func extractFile(tarfile, filename string) ([]byte, error) {
+func extractFile(tarfile, filename string, writer io.Writer) ([]byte, error) {
 	in, err := os.OpenFile(tarfile, os.O_RDONLY, 0)
 	if err != nil {
 		logrus.Errorf("Failed to open %v: %v", tarfile, err)
@@ -278,7 +293,12 @@ func extractFile(tarfile, filename string) ([]byte, error) {
 		clean := filepath.Clean(hdr.Name)
 		if clean == filename {
 			// found the reference we are supposed to use
-			return ioutil.ReadAll(tarIn)
+			if writer != nil {
+				_, err := io.Copy(writer, tarIn)
+				return nil, err
+			} else {
+				return ioutil.ReadAll(tarIn)
+			}
 		}
 	}
 	return nil, fmt.Errorf("Could not find %s in %s", filename, tarfile)
@@ -290,7 +310,8 @@ func digestExtractor(tarfile string) Extractor {
 			string(digest.Algorithm()),
 			digest.Hex())
 		filename := filepath.Join(parts...)
-		return extractFile(tarfile, filename)
+
+		return extractFile(tarfile, filename, nil)
 	}
 }
 
@@ -336,13 +357,29 @@ func imageFromDigest(extract Extractor, digest gdigest.Digest, annotations map[s
 		layer := Layer{}
 		layer.Desc = manifest.Layers[i]
 		layer.DiffID = config.RootFS.DiffIDs[i]
+
 		if layer.Desc.Digest == "" {
 			return nil, fmt.Errorf("image config has an invalid layer reference")
 		}
-		layer.Data, err = extract(layer.Desc.Digest)
+
+		layerData, err := extract(layer.Desc.Digest)
+
 		if err != nil {
 			return nil, err
 		}
+
+		layerFile, err := ioutil.TempFile("", "layer-")
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to create layer temporary file: %v", err)
+		}
+
+		io.Copy(layerFile, bytes.NewReader(layerData))
+
+		layer.Filepath = layerFile.Name()
+
+		logrus.Debugf("added layer %+v", layer)
+
 		layers = append(layers, &layer)
 	}
 	return &Image{Config: &config, Layers: layers}, nil
@@ -351,7 +388,8 @@ func imageFromDigest(extract Extractor, digest gdigest.Digest, annotations map[s
 type Layer struct {
 	Desc   v1.Descriptor
 	DiffID gdigest.Digest
-	Data   []byte
+	//Data   []byte
+	Filepath string
 }
 
 // ImageMetadata stores metadata such as build time
@@ -390,7 +428,7 @@ func (at OciArchiveType) Name() string {
 }
 
 func (at OciArchiveType) Probe(tarpath string) (bool, []byte) {
-	refb, err := extractFile(tarpath, "index.json")
+	refb, err := extractFile(tarpath, "index.json", nil)
 	if err != nil {
 		logrus.Debugf("failed to find OCI archive: %v", err)
 		return false, nil
@@ -540,7 +578,21 @@ func WriteOciTar(image *Image, out io.Writer) error {
 		digest := l.Desc.Digest
 		parts := append([]string{"blobs"}, string(digest.Algorithm()), digest.Hex())
 		logrus.Debugf("Adding layer %s to image", l.Desc.Digest)
-		fileData[filepath.Join(parts...)] = l.Data
+		reader, err := os.Open(l.Filepath)
+
+		if err != nil {
+			logrus.Errorf("failed to open layer %s: %v", l.Filepath, err)
+			return err
+		}
+
+		stat, err := reader.Stat()
+
+		if err != nil {
+			logrus.Errorf("failed to stat layer %s: %v", l.Filepath, err)
+			return err
+		}
+
+		writeFileTar(tarOut, filepath.Join(parts...), stat.Size(), reader)
 	}
 
 	// add config
@@ -551,7 +603,7 @@ func WriteOciTar(image *Image, out io.Writer) error {
 	}
 	configSha := digest(configData)
 	fileData[filepath.Join(shaBase, configSha.Hex())] = configData
-	configDesc := desc(configMT, configData, configSha)
+	configDesc := desc(configMT, int64(len(configData)), configSha)
 
 	// add manifest
 	manifestData, err := serializeManifest(configDesc, image.Layers, false)
@@ -580,7 +632,8 @@ func WriteOciTar(image *Image, out io.Writer) error {
 			writeDirTar(tarOut, dir)
 			dirs[dir] = struct{}{}
 		}
-		writeFileTar(tarOut, filename, fileData[filename])
+		size := int64(len(fileData[filename]))
+		writeFileTar(tarOut, filename, size, bytes.NewReader(fileData[filename]))
 	}
 
 	layout := v1.ImageLayout{Version: "1.0.0"}
@@ -588,10 +641,10 @@ func WriteOciTar(image *Image, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	writeFileTar(tarOut, "oci-layout", layoutData)
+	writeFileTar(tarOut, "oci-layout", int64(len(layoutData)), bytes.NewReader(layoutData))
 
 	// build manifest entry for "latest" image manifest
-	latest := desc(manifestMT, manifestData, manifestSha)
+	latest := desc(manifestMT, int64(len(manifestData)), manifestSha)
 	if image.Metadata != nil {
 		latest.Annotations = map[string]string{}
 		latest.Annotations[v1.AnnotationRefName] = "latest"
@@ -614,7 +667,7 @@ func WriteOciTar(image *Image, out io.Writer) error {
 	}
 	for i, b := range image.AdditionalBlobs {
 		d := digest(b.Content)
-		entry := desc(b.Filetype, b.Content, d)
+		entry := desc(b.Filetype, int64(len(b.Content)), d)
 		entry.Annotations = annotations
 		allBlobs[i] = entry
 	}
@@ -624,7 +677,7 @@ func WriteOciTar(image *Image, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	writeFileTar(tarOut, "index.json", indexData)
+	writeFileTar(tarOut, "index.json", int64(len(indexData)), bytes.NewReader(indexData))
 	return nil
 }
 
@@ -644,7 +697,13 @@ func writeFile(path string, in io.Reader, perm os.FileMode) error {
 }
 
 func extractLayer(layer *Layer, outDir string) error {
-	gzipIn, err := MaybeGzipReader(NopCloser(bytes.NewReader(layer.Data)))
+	layerFile, err := os.Open(layer.Filepath)
+
+	if err != nil {
+		return err
+	}
+
+	gzipIn, err := MaybeGzipReader(layerFile)
 	if err != nil {
 		logrus.Errorf("Failed to read gzip: %v", err)
 		return err

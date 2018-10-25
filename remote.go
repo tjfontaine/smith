@@ -6,9 +6,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"strings"
 	"time"
@@ -125,7 +127,13 @@ func (r *RegistryClient) ImageToRepo(info *RepoInfo, image *Image) error {
 	for _, l := range image.Layers {
 		p := path.Join("blobs", string(l.Desc.Digest))
 		// media type of blob seems to be ignored, but set it just in case
-		if err := r.PutObject(info, p, lMT, l.Data); err != nil {
+		layerFile, err := os.Open(l.Filepath)
+
+		if err != nil {
+			return fmt.Errorf("failed to open layer %s: %v", err)
+		}
+
+		if err := r.PutObject(info, p, lMT, layerFile); err != nil {
 			return err
 		}
 	}
@@ -136,14 +144,14 @@ func (r *RegistryClient) ImageToRepo(info *RepoInfo, image *Image) error {
 
 	configSha := digest(configData)
 	p := path.Join("blobs", string(configSha))
-	if err := r.PutObject(info, p, cMT, configData); err != nil {
+	if err := r.PutObject(info, p, cMT, bytes.NewReader(configData)); err != nil {
 		return err
 	}
 
-	configDesc := desc(cMT, configData, configSha)
+	configDesc := desc(cMT, int64(len(configData)), configSha)
 	manifestData, err := serializeManifest(configDesc, image.Layers, info.Docker)
 	p = path.Join("manifests", info.Tag)
-	if err := r.PutObject(info, p, mMT, manifestData); err != nil {
+	if err := r.PutObject(info, p, mMT, bytes.NewReader(manifestData)); err != nil {
 		return err
 	}
 	return nil
@@ -288,7 +296,7 @@ func (r *RegistryClient) PrepPutObject(info *RepoInfo, path string) (string, err
 }
 
 // PutObject puts an object to the repo in "info" at the path in "path".
-func (r *RegistryClient) PutObject(info *RepoInfo, path, ct string, data []byte) error {
+func (r *RegistryClient) PutObject(info *RepoInfo, path, ct string, data io.Reader) error {
 	if info.Host == "" {
 		return fmt.Errorf("Host must be specified")
 	}
@@ -353,7 +361,7 @@ func (r *RegistryClient) PutObject(info *RepoInfo, path, ct string, data []byte)
 				resp.StatusCode, string(buf.Bytes()))
 		}
 	}
-	req, err := http.NewRequest("PUT", u, bytes.NewReader(data))
+	req, err := http.NewRequest("PUT", u, data)
 	if err != nil {
 		return err
 	}

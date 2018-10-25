@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	gdigest "github.com/opencontainers/go-digest"
@@ -25,7 +26,7 @@ func getDockerManifest(manifestJson []byte, inArchive string) (*dockerSaveManife
 	var err error
 
 	if manifestJson == nil {
-		manifestJson, err = extractFile(inArchive, "manifest.json")
+		manifestJson, err = extractFile(inArchive, "manifest.json", nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to extract docker archive manifest %s: %v", inArchive, err)
 		}
@@ -50,7 +51,7 @@ func (at DockerArchiveType) Name() string {
 }
 
 func (at DockerArchiveType) Probe(inArchive string) (bool, []byte) {
-	refb, err := extractFile(inArchive, "manifest.json")
+	refb, err := extractFile(inArchive, "manifest.json", nil)
 	if err != nil {
 		logrus.Debugf("failed to find docker archive: %v", err)
 		return false, nil
@@ -59,7 +60,7 @@ func (at DockerArchiveType) Probe(inArchive string) (bool, []byte) {
 }
 
 func getDockerImageConfig(inArchive string, configFile string) (*v1.Image, error) {
-	configJson, err := extractFile(inArchive, configFile)
+	configJson, err := extractFile(inArchive, configFile, nil)
 
 	if err != nil {
 		logrus.Fatalf("Failed to extract config file %s from docker archive %s: %v", configFile, inArchive, err)
@@ -101,7 +102,14 @@ func (at DockerArchiveType) GetImage(manifestBytes []byte, tag string, shortPath
 	logrus.Debugf("layers: %v", layers)
 
 	for index, layer := range dockerManifest.Layers {
-		layerContent, err := extractFile(inArchive, layer)
+		layerFile, err := ioutil.TempFile("", "layer-")
+
+		if err != nil {
+			logrus.Errorf("failed to create temporary file: %v", err)
+			return nil, err
+		}
+
+		_, err = extractFile(inArchive, layer, layerFile)
 
 		logrus.Debugf("Extracting layer %s", layer)
 
@@ -118,12 +126,19 @@ func (at DockerArchiveType) GetImage(manifestBytes []byte, tag string, shortPath
 
 		logrus.Debugf("made digest: %s - %s", digest.Hex(), digest.String())
 
+		stat, err := layerFile.Stat()
+
+		if err != nil {
+			logrus.Errorf("failed to stat layer: %v", err)
+			return nil, err
+		}
+
 		newLayer := &Layer{
-			Data: layerContent,
+			Filepath: layerFile.Name(),
 			Desc: v1.Descriptor{
 				MediaType: v1.MediaTypeImageLayer,
 				Digest:    digest,
-				Size:      int64(len(layerContent)),
+				Size:      stat.Size(),
 			},
 		}
 
@@ -252,7 +267,21 @@ func WriteDockerTar(buildOpts *buildOptions, image *Image, out io.Writer) error 
 			return err
 		}
 
-		err = writeFileTar(destTar, layer.Desc.Digest.Hex()+"/layer.tar", layer.Data)
+		layerFile, err := os.Open(layer.Filepath)
+
+		if err != nil {
+			return fmt.Errorf("failed to open layer %s: %v", layer.Filepath, err)
+		}
+
+		stat, err := layerFile.Stat()
+
+		if err != nil {
+			return fmt.Errorf("failed to stat layer %s: %v", layer.Filepath, err)
+		}
+
+		logrus.Debugf("%+v %+v", stat, layer)
+
+		err = writeFileTar(destTar, layer.Desc.Digest.Hex()+"/layer.tar", stat.Size(), layerFile)
 
 		if err != nil {
 			logrus.Fatalf("Failed to add file %s to destination archive: %v", layer.Desc.Digest.Hex()+"/layer.tar", err)
@@ -291,14 +320,14 @@ func WriteDockerTar(buildOpts *buildOptions, image *Image, out io.Writer) error 
 
 	logrus.Debugf("manifestStr: %s", manifestStr)
 
-	err = writeFileTar(destTar, "manifest.json", manifestStr)
+	err = writeFileTar(destTar, "manifest.json", int64(len(manifestStr)), bytes.NewBuffer(manifestStr))
 
 	if err != nil {
 		logrus.Fatalf("Failed to commit writing docker-archive tarfile: %v", err)
 		return err
 	}
 
-	err = writeFileTar(destTar, manifest.ConfigFileName, configStr)
+	err = writeFileTar(destTar, manifest.ConfigFileName, int64(len(configStr)), bytes.NewReader(configStr))
 
 	if err != nil {
 		logrus.Fatalf("Failed to add config file %s for archive: %v", manifest.ConfigFileName, err)
