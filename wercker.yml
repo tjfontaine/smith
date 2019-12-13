@@ -1,16 +1,12 @@
-box: golang:1.8
+box: golang:1.13
 no-response-timeout: 15
 
 build:
   base-path: /go/src/github.com/oracle/smith
   steps:
     - script:
-        name: install govendor
-        code: go get -u github.com/kardianos/govendor
-
-    - script:
         name: go vet
-        code: govendor vet +local
+        code: go vet
 
     # golint is a little to strict
     # - golint:
@@ -18,7 +14,7 @@ build:
 
     - script:
         name: go test
-        code: govendor test +local
+        code: go test
 
     - script:
         name: clear out the build binaries
