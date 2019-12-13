@@ -90,8 +90,6 @@ func installPackage(buildOpts *buildOptions, outputDir string, pkg *ConfigDef) (
 	default:
 		return nil, fmt.Errorf("Package type %v not recognized", pkg.Type)
 	}
-
-	return nil, fmt.Errorf("Package type not recognized (impossible)")
 }
 
 func getMetadata() *ImageMetadata {
