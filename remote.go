@@ -130,7 +130,7 @@ func (r *RegistryClient) ImageToRepo(info *RepoInfo, image *Image) error {
 		layerFile, err := os.Open(l.Filepath)
 
 		if err != nil {
-			return fmt.Errorf("failed to open layer %s: %v", err)
+			return fmt.Errorf("failed to open layer %s: %v", l.Filepath, err)
 		}
 
 		if err := r.PutObject(info, p, lMT, layerFile); err != nil {
